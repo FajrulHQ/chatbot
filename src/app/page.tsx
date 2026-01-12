@@ -13,6 +13,7 @@ const initialMessages: ChatMessage[] = [];
 export default function Home() {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
+  const [isSending, setIsSending] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState("");
   const recognitionRef = useRef<SpeechRecognition | null>(null);
@@ -64,21 +65,54 @@ export default function Home() {
     };
   }, []);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const trimmed = input.trim();
-    if (!trimmed) return;
+    if (!trimmed || isSending) return;
     const userMessage: ChatMessage = {
       id: `${Date.now()}-user`,
       role: "user",
       text: trimmed,
     };
-    const assistantMessage: ChatMessage = {
-      id: `${Date.now()}-assistant`,
-      role: "assistant",
-      text: "Got it. Want this shorter, more formal, or tailored to a specific audience?",
-    };
-    setMessages((prev) => [...prev, userMessage, assistantMessage]);
+    const nextMessages = [...messages, userMessage];
+    setMessages(nextMessages);
     setInput("");
+    setIsSending(true);
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messages: nextMessages.map((message) => ({
+            role: message.role,
+            content: message.text,
+          })),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Ollama request failed");
+      }
+
+      const data: { message?: string } = await response.json();
+      const assistantMessage: ChatMessage = {
+        id: `${Date.now()}-assistant`,
+        role: "assistant",
+        text: data.message ?? "No response received.",
+      };
+      setMessages((prev) => [...prev, assistantMessage]);
+    } catch (error) {
+      const assistantMessage: ChatMessage = {
+        id: `${Date.now()}-assistant`,
+        role: "assistant",
+        text: "Sorry, I couldn't reach the local model. Is Ollama running?",
+      };
+      setMessages((prev) => [...prev, assistantMessage]);
+    } finally {
+      setIsSending(false);
+    }
   };
 
   const toggleListening = () => {
@@ -147,7 +181,7 @@ export default function Home() {
             </div>
             <div className="flex items-center gap-2 text-xs font-medium">
               <span className="rounded-full border border-black/10 bg-[#f7f2e9] px-3 py-2 text-[#4f5148]">
-                GPT-4.1 · Balanced
+                llama3.2 · Local
               </span>
               <span className="rounded-full border border-black/10 bg-white px-3 py-2 text-[#4f5148]">
                 Temp 0.7
@@ -207,6 +241,7 @@ export default function Home() {
                   placeholder="Message Atlas..."
                   value={input}
                   onChange={(event) => setInput(event.target.value)}
+                  disabled={isSending}
                 />
                 <div className="flex items-center gap-2">
                   <button
@@ -224,12 +259,18 @@ export default function Home() {
                   </button>
                   <button
                     type="submit"
+                    disabled={isSending}
                     className="rounded-full bg-[#1b1c19] px-6 py-3 text-sm font-semibold text-white shadow-[0_16px_30px_-18px_rgba(0,0,0,0.7)] transition hover:-translate-y-0.5"
                   >
-                    Send
+                    {isSending ? "Thinking..." : "Send"}
                   </button>
                 </div>
               </div>
+              {isSending ? (
+                <p className="text-xs text-[#6a6d62]">
+                  Talking to your local Ollama model…
+                </p>
+              ) : null}
               {voiceStatus ? (
                 <p className="text-xs text-[#c77c4e]">{voiceStatus}</p>
               ) : null}
