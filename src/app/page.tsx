@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type ChatMessage = {
   id: string;
@@ -13,6 +13,56 @@ const initialMessages: ChatMessage[] = [];
 export default function Home() {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
+  const [isListening, setIsListening] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState("");
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const SpeechRecognition =
+      (window as typeof window & {
+        webkitSpeechRecognition?: typeof window.SpeechRecognition;
+      }).SpeechRecognition ||
+      (window as typeof window & {
+        webkitSpeechRecognition?: typeof window.SpeechRecognition;
+      }).webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      setVoiceStatus("Voice input unavailable in this browser.");
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = "en-US";
+    recognition.interimResults = true;
+    recognition.continuous = true;
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let transcript = "";
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        transcript += event.results[i][0].transcript;
+      }
+      setInput(transcript.trimStart());
+    };
+
+    recognition.onstart = () => {
+      setIsListening(true);
+      setVoiceStatus("Listening…");
+    };
+    recognition.onend = () => {
+      setIsListening(false);
+      setVoiceStatus("");
+    };
+    recognition.onerror = () => {
+      setIsListening(false);
+      setVoiceStatus("Mic error. Check permissions.");
+    };
+
+    recognitionRef.current = recognition;
+    return () => {
+      recognition.stop();
+    };
+  }, []);
 
   const handleSend = () => {
     const trimmed = input.trim();
@@ -29,6 +79,19 @@ export default function Home() {
     };
     setMessages((prev) => [...prev, userMessage, assistantMessage]);
     setInput("");
+  };
+
+  const toggleListening = () => {
+    const recognition = recognitionRef.current;
+    if (!recognition) {
+      setVoiceStatus("Voice input unavailable in this browser.");
+      return;
+    }
+    if (isListening) {
+      recognition.stop();
+      return;
+    }
+    recognition.start();
   };
 
   return (
@@ -145,13 +208,31 @@ export default function Home() {
                   value={input}
                   onChange={(event) => setInput(event.target.value)}
                 />
-                <button
-                  type="submit"
-                  className="rounded-full bg-[#1b1c19] px-6 py-3 text-sm font-semibold text-white shadow-[0_16px_30px_-18px_rgba(0,0,0,0.7)] transition hover:-translate-y-0.5"
-                >
-                  Send
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={toggleListening}
+                    className={`flex h-11 w-11 items-center justify-center rounded-full border text-lg transition ${
+                      isListening
+                        ? "border-[#c77c4e] bg-[#f3c7a2] text-[#1b1c19] shadow-[0_10px_20px_-12px_rgba(0,0,0,0.6)]"
+                        : "border-black/10 bg-white text-[#1b1c19] hover:-translate-y-0.5"
+                    }`}
+                    aria-pressed={isListening}
+                    aria-label="Toggle voice input"
+                  >
+                    {isListening ? "●" : "🎙️"}
+                  </button>
+                  <button
+                    type="submit"
+                    className="rounded-full bg-[#1b1c19] px-6 py-3 text-sm font-semibold text-white shadow-[0_16px_30px_-18px_rgba(0,0,0,0.7)] transition hover:-translate-y-0.5"
+                  >
+                    Send
+                  </button>
+                </div>
               </div>
+              {voiceStatus ? (
+                <p className="text-xs text-[#c77c4e]">{voiceStatus}</p>
+              ) : null}
               <p className="text-xs text-[#9b9e93]">
                 Atlas can make mistakes. Consider checking important details.
               </p>
