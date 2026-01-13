@@ -8,6 +8,7 @@ type ChatMessage = {
   id: string;
   role: "user" | "assistant";
   text: string;
+  think?: string;
 };
 
 const initialMessages: ChatMessage[] = [];
@@ -16,11 +17,24 @@ export default function Home() {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [expandedThink, setExpandedThink] = useState<Record<string, boolean>>(
+    {}
+  );
   const [isListening, setIsListening] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState("");
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const chatBodyRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  const splitThink = (content: string) => {
+    const match = content.match(/<think>([\s\S]*?)<\/think>/i);
+    if (!match) {
+      return { answer: content, think: "" };
+    }
+    const think = match[1].trim();
+    const answer = content.replace(match[0], "").trim();
+    return { answer, think };
+  };
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -82,7 +96,17 @@ export default function Home() {
       role: "user",
       text: trimmed,
     };
-    const nextMessages = [...messages, userMessage];
+    const assistantId = `${Date.now()}-assistant`;
+    const nextMessages = [
+      ...messages,
+      userMessage,
+      {
+        id: assistantId,
+        role: "assistant",
+        text: "",
+        think: "",
+      },
+    ];
     setMessages(nextMessages);
     setInput("");
     setIsSending(true);
@@ -94,7 +118,9 @@ export default function Home() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          messages: nextMessages.map((message) => ({
+          messages: nextMessages
+            .filter((message) => message.role !== "assistant" || message.text)
+            .map((message) => ({
             role: message.role,
             content: message.text,
           })),
@@ -105,20 +131,67 @@ export default function Home() {
         throw new Error("Ollama request failed");
       }
 
-      const data: { message?: string } = await response.json();
-      const assistantMessage: ChatMessage = {
-        id: `${Date.now()}-assistant`,
-        role: "assistant",
-        text: data.message ?? "No response received.",
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
+      if (!response.body) {
+        throw new Error("No stream returned");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let accumulated = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+
+        for (const part of parts) {
+          const lines = part.split("\n").filter((line) => line.trim());
+          for (const line of lines) {
+            if (!line.startsWith("data:")) continue;
+            const data = line.replace("data:", "").trim();
+            if (data === "[DONE]") {
+              break;
+            }
+            try {
+              const payload = JSON.parse(data) as {
+                choices?: { delta?: { content?: string } }[];
+              };
+              const delta = payload.choices?.[0]?.delta?.content ?? "";
+              if (!delta) continue;
+              accumulated += delta;
+              const { answer, think } = splitThink(accumulated);
+              setMessages((prev) =>
+                prev.map((message) =>
+                  message.id === assistantId
+                    ? {
+                        ...message,
+                        text: answer,
+                        think,
+                      }
+                    : message
+                )
+              );
+            } catch (parseError) {
+              continue;
+            }
+          }
+        }
+      }
     } catch (error) {
-      const assistantMessage: ChatMessage = {
-        id: `${Date.now()}-assistant`,
-        role: "assistant",
-        text: "Sorry, I couldn't reach the local model. Is Ollama running?",
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === assistantId
+            ? {
+                ...message,
+                text: "Sorry, I couldn't reach the local model. Is LM Studio running?",
+              }
+            : message
+        )
+      );
     } finally {
       setIsSending(false);
     }
@@ -135,6 +208,13 @@ export default function Home() {
       return;
     }
     recognition.start();
+  };
+
+  const toggleThink = (id: string) => {
+    setExpandedThink((prev) => ({
+      ...prev,
+      [id]: !prev[id],
+    }));
   };
 
   return (
@@ -185,12 +265,12 @@ export default function Home() {
                 Assistant
               </p>
               <h1 className="text-2xl font-semibold tracking-tight text-[#1b1c19]">
-                HQ Chatbot
+                AI Chatbot
               </h1>
             </div>
             <div className="flex items-center gap-2 text-xs font-medium">
               <span className="rounded-full border border-black/10 bg-[#f7f2e9] px-3 py-2 text-[#4f5148]">
-                llama3.2 · Local
+                qwen3-4b · Local
               </span>
               <span className="rounded-full border border-black/10 bg-white px-3 py-2 text-[#4f5148]">
                 Temp 0.7
@@ -213,29 +293,50 @@ export default function Home() {
                 >
                   {message.role === "user" ? "You" : "AI"}
                 </div>
-                <div
-                  className={`max-w-xl rounded-[24px] border border-black/5 px-5 py-4 text-sm leading-6 text-[#2b2d28] ${
-                    message.role === "user"
-                      ? "bg-[#f7f2e9]"
-                      : "bg-white shadow-[0_16px_40px_-32px_rgba(0,0,0,0.6)]"
-                  }`}
-                >
-                  <ReactMarkdown className="markdown" remarkPlugins={[remarkGfm]}>
-                    {message.text}
-                  </ReactMarkdown>
+                <div className="max-w-xl space-y-3">
+                  {message.role === "assistant" && message.think ? (
+                    <div className="px-3 py-2 text-[11px] text-[#6a6d62]">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-semibold uppercase tracking-[0.2em]">
+                          Think
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => toggleThink(message.id)}
+                          className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#6a6d62] transition hover:text-[#1b1c19]"
+                        >
+                          {expandedThink[message.id] ? "Hide" : "Show"}
+                        </button>
+                      </div>
+                      {expandedThink[message.id] ? (
+                        <div className="mt-2 rounded-2xl bg-[#f7f2e9] px-3 py-2 text-[12px] leading-5 text-[#5a5d53]">
+                          <ReactMarkdown
+                            className="markdown"
+                            remarkPlugins={[remarkGfm]}
+                          >
+                            {message.think}
+                          </ReactMarkdown>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  <div
+                    className={`rounded-[24px] border border-black/5 px-5 py-4 text-sm leading-6 text-[#2b2d28] ${
+                      message.role === "user"
+                        ? "bg-[#f7f2e9]"
+                        : "bg-white shadow-[0_16px_40px_-32px_rgba(0,0,0,0.6)]"
+                    }`}
+                  >
+                    <ReactMarkdown
+                      className="markdown"
+                      remarkPlugins={[remarkGfm]}
+                    >
+                      {message.text}
+                    </ReactMarkdown>
+                  </div>
                 </div>
               </div>
             ))}
-            {isSending ? (
-              <div className="flex items-start gap-4">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#d7e3d1] text-xs font-semibold text-[#1b1c19]">
-                  AI
-                </div>
-                <div className="max-w-xl rounded-[24px] border border-black/5 bg-white px-5 py-4 text-sm leading-6 text-[#6a6d62] shadow-[0_16px_40px_-32px_rgba(0,0,0,0.6)]">
-                  Thinking…
-                </div>
-              </div>
-            ) : null}
             <div ref={bottomRef} />
           </section>
 
@@ -260,7 +361,7 @@ export default function Home() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <input
                   className="flex-1 rounded-full border border-black/10 bg-[#fdfbf7] px-4 py-3 text-sm text-[#1b1c19] placeholder:text-[#9b9e93] focus:outline-none focus:ring-2 focus:ring-[#c4d4c5]"
-                  placeholder="Message Atlas..."
+                  placeholder="Message AI..."
                   value={input}
                   onChange={(event) => setInput(event.target.value)}
                   disabled={isSending}
@@ -290,14 +391,14 @@ export default function Home() {
               </div>
               {isSending ? (
                 <p className="text-xs text-[#6a6d62]">
-                  Talking to your local Ollama model…
+                  Streaming from LM Studio…
                 </p>
               ) : null}
               {voiceStatus ? (
                 <p className="text-xs text-[#c77c4e]">{voiceStatus}</p>
               ) : null}
               <p className="text-xs text-[#9b9e93]">
-                Atlas can make mistakes. Consider checking important details.
+                AI can make mistakes. Consider checking important details.
               </p>
             </form>
           </footer>

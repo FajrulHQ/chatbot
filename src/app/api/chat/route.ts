@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 
-type OllamaMessage = {
+type LmStudioMessage = {
   role: "user" | "assistant" | "system";
   content: string;
 };
 
 export async function POST(request: Request) {
   const { messages } = (await request.json()) as {
-    messages?: OllamaMessage[];
+    messages?: LmStudioMessage[];
   };
 
   if (!messages || messages.length === 0) {
@@ -18,35 +18,46 @@ export async function POST(request: Request) {
   }
 
   try {
-    const response = await fetch("http://localhost:11434/api/chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "llama3.2",
-        stream: false,
-        messages,
-      }),
-    });
+    const response = await fetch(
+      "http://localhost:1234/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "qwen3-4b",
+          messages,
+          temperature: 0.7,
+          stream: true,
+        }),
+      }
+    );
 
     if (!response.ok) {
       return NextResponse.json(
-        { error: "Ollama request failed." },
+        { error: "LM Studio request failed." },
         { status: response.status }
       );
     }
 
-    const data = (await response.json()) as {
-      message?: { content?: string };
-    };
+    if (!response.body) {
+      return NextResponse.json(
+        { error: "LM Studio stream unavailable." },
+        { status: 500 }
+      );
+    }
 
-    return NextResponse.json({
-      message: data.message?.content ?? "",
+    return new Response(response.body, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+      },
     });
   } catch (error) {
     return NextResponse.json(
-      { error: "Unable to reach Ollama." },
+      { error: "Unable to reach LM Studio." },
       { status: 500 }
     );
   }
