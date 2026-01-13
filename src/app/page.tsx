@@ -1,8 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { getDocument, GlobalWorkerOptions } from "pdfjs-dist/legacy/build/pdf";
+
+GlobalWorkerOptions.workerSrc = new URL(
+  "pdfjs-dist/legacy/build/pdf.worker.min.mjs",
+  import.meta.url
+).toString();
 
 type ChatMessage = {
   id: string;
@@ -21,6 +27,10 @@ export default function Home() {
   const [expandedThink, setExpandedThink] = useState<Record<string, boolean>>(
     {}
   );
+  const [docText, setDocText] = useState("");
+  const [docName, setDocName] = useState("");
+  const [docError, setDocError] = useState("");
+  const [docStatus, setDocStatus] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState("");
   const recognitionRef = useRef<SpeechRecognition | null>(null);
@@ -35,6 +45,21 @@ export default function Home() {
     const think = match[1].trim();
     const answer = content.replace(match[0], "").trim();
     return { answer, think };
+  };
+
+  const extractPdfText = async (file: File) => {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await getDocument({ data: arrayBuffer }).promise;
+    let fullText = "";
+    for (let pageIndex = 1; pageIndex <= pdf.numPages; pageIndex += 1) {
+      const page = await pdf.getPage(pageIndex);
+      const content = await page.getTextContent();
+      const pageText = content.items
+        .map((item) => (item as { str?: string }).str ?? "")
+        .join(" ");
+      fullText += `${pageText}\n`;
+    }
+    return fullText.trim();
   };
 
   useEffect(() => {
@@ -89,6 +114,43 @@ export default function Home() {
     bottomRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, isSending]);
 
+  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setDocError("");
+    setDocStatus("");
+    if (file.size > 2_000_000) {
+      setDocError("File too large. Please use a file under 2MB.");
+      return;
+    }
+    const isPdf =
+      file.type === "application/pdf" ||
+      file.name.toLowerCase().endsWith(".pdf");
+    try {
+      if (isPdf) {
+        setDocStatus("Extracting text from PDF…");
+      }
+      const text = isPdf ? await extractPdfText(file) : await file.text();
+      if (!text.trim()) {
+        setDocError("No readable text found in this file.");
+        return;
+      }
+      setDocText(text);
+      setDocName(file.name);
+    } catch (error) {
+      setDocError("Unable to read file.");
+    } finally {
+      setDocStatus("");
+    }
+  };
+
+  const clearDocument = () => {
+    setDocText("");
+    setDocName("");
+    setDocError("");
+    setDocStatus("");
+  };
+
   const handleSend = async () => {
     const trimmed = input.trim();
     if (!trimmed || isSending) return;
@@ -127,13 +189,14 @@ export default function Home() {
           })),
       ];
 
-      const response = await fetch("/api/chat", {
+      const response = await fetch(docText ? "/api/rag" : "/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           messages: payloadMessages,
+          documentText: docText || undefined,
         }),
       });
 
@@ -292,6 +355,11 @@ export default function Home() {
               <span className="rounded-full border border-black/10 bg-white px-3 py-2 text-[#4f5148]">
                 Temp 0.7
               </span>
+              {docName ? (
+                <span className="rounded-full border border-black/10 bg-white px-3 py-2 text-[#4f5148]">
+                  RAG · {docName}
+                </span>
+              ) : null}
               <button
                 type="button"
                 onClick={() => setThinkEnabled((prev) => !prev)}
@@ -376,6 +444,39 @@ export default function Home() {
                 handleSend();
               }}
             >
+              <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-[#6a6d62]">
+                <label
+                  className="cursor-pointer rounded-full border border-black/10 bg-white px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#4f5148] transition hover:-translate-y-0.5"
+                  htmlFor="rag-file"
+                >
+                  Upload File
+                </label>
+                <input
+                  id="rag-file"
+                  type="file"
+                  accept=".txt,.md,.csv,.json,.pdf"
+                  className="hidden"
+                  onChange={handleFileChange}
+                />
+                {docName ? (
+                  <>
+                    <span className="rounded-full border border-black/10 bg-[#f7f2e9] px-3 py-2 text-[11px] text-[#4f5148]">
+                      {docName}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={clearDocument}
+                      className="rounded-full border border-black/10 bg-white px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#4f5148] transition hover:-translate-y-0.5"
+                    >
+                      Clear
+                    </button>
+                  </>
+                ) : (
+                  <span className="text-[11px] text-[#8a8d82]">
+                    Upload a text file to enable RAG.
+                  </span>
+                )}
+              </div>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <input
                   className="flex-1 rounded-full border border-black/10 bg-[#fdfbf7] px-4 py-3 text-sm text-[#1b1c19] placeholder:text-[#9b9e93] focus:outline-none focus:ring-2 focus:ring-[#c4d4c5]"
@@ -411,6 +512,12 @@ export default function Home() {
                 <p className="text-xs text-[#6a6d62]">
                   Streaming from LM Studio…
                 </p>
+              ) : null}
+              {docStatus ? (
+                <p className="text-xs text-[#6a6d62]">{docStatus}</p>
+              ) : null}
+              {docError ? (
+                <p className="text-xs text-[#c77c4e]">{docError}</p>
               ) : null}
               {voiceStatus ? (
                 <p className="text-xs text-[#c77c4e]">{voiceStatus}</p>
