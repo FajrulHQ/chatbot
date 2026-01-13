@@ -18,6 +18,7 @@ type ChatMessage = {
 };
 
 const initialMessages: ChatMessage[] = [];
+const SPEECH_FLUSH_CHARS = 140;
 
 export default function Home() {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
@@ -41,13 +42,20 @@ export default function Home() {
   const speakingRef = useRef(false);
   const listeningRef = useRef(false);
   const startingRef = useRef(false);
+  const speechBufferRef = useRef("");
+  const spokenIndexRef = useRef(0);
   const chatBodyRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  const stripThink = (content: string) =>
+    content
+      .replace(/<think>[\s\S]*?<\/think>/gi, "")
+      .replace(/<think>[\s\S]*/gi, "");
 
   const splitThink = (content: string) => {
     const match = content.match(/<think>([\s\S]*?)<\/think>/i);
     if (!match) {
-      return { answer: content, think: "" };
+      return { answer: stripThink(content).trim(), think: "" };
     }
     const think = match[1].trim();
     const answer = content.replace(match[0], "").trim();
@@ -192,28 +200,49 @@ export default function Home() {
     setDocStatus("");
   };
 
-  const speakText = (text: string) => {
+  const startRecognitionIfIdle = () => {
+    const recognition = recognitionRef.current;
+    if (!recognition || listeningRef.current || startingRef.current) return;
+    startingRef.current = true;
+    try {
+      recognition.start();
+    } catch (error) {
+      startingRef.current = false;
+    }
+  };
+
+  const enqueueSpeech = (chunk: string, flush = false) => {
     if (typeof window === "undefined") return Promise.resolve();
     if (!("speechSynthesis" in window)) {
       setVoiceStatus("Voice output unavailable in this browser.");
       return Promise.resolve();
     }
+    speechBufferRef.current += chunk;
+    const buffer = speechBufferRef.current;
+    const shouldFlush =
+      flush ||
+      buffer.length >= SPEECH_FLUSH_CHARS ||
+      /[.!?。！？]\s*$/.test(buffer);
+    if (!shouldFlush) return Promise.resolve();
+    const toSpeak = buffer.trim();
+    speechBufferRef.current = "";
+    if (!toSpeak) return Promise.resolve();
     return new Promise<void>((resolve) => {
-      const utterance = new SpeechSynthesisUtterance(text);
+      const utterance = new SpeechSynthesisUtterance(toSpeak);
       utterance.lang = "en-US";
       utterance.onstart = () => {
         setIsSpeaking(true);
         setVoiceStatus("Speaking…");
       };
       utterance.onend = () => {
-        setIsSpeaking(false);
-        setVoiceStatus(conversationModeRef.current ? "Listening…" : "");
-        if (
-          conversationModeRef.current &&
-          recognitionRef.current &&
-          !listeningRef.current
-        ) {
-          recognitionRef.current.start();
+        const synth = window.speechSynthesis;
+        const stillSpeaking = synth.speaking || synth.pending;
+        if (!stillSpeaking && !speechBufferRef.current.trim()) {
+          setIsSpeaking(false);
+          setVoiceStatus(conversationModeRef.current ? "Listening…" : "");
+          if (conversationModeRef.current) {
+            startRecognitionIfIdle();
+          }
         }
         resolve();
       };
@@ -222,7 +251,6 @@ export default function Home() {
         setVoiceStatus("Speech output error.");
         resolve();
       };
-      window.speechSynthesis.cancel();
       window.speechSynthesis.speak(utterance);
     });
   };
@@ -250,6 +278,8 @@ export default function Home() {
     setInput("");
     setIsSending(true);
     finalTranscriptRef.current = "";
+    speechBufferRef.current = "";
+    spokenIndexRef.current = 0;
     if (recognitionRef.current) {
       recognitionRef.current.stop();
     }
@@ -319,9 +349,7 @@ export default function Home() {
               const { answer, think } = thinkEnabled
                 ? splitThink(accumulated)
                 : {
-                    answer: accumulated
-                      .replace(/<think>[\s\S]*?<\/think>/gi, "")
-                      .trim(),
+                    answer: stripThink(accumulated).trim(),
                     think: "",
                   };
               setMessages((prev) =>
@@ -335,6 +363,16 @@ export default function Home() {
                     : message
                 )
               );
+              if (isConversationMode) {
+                const speechSafe = stripThink(accumulated);
+                const speechDelta = speechSafe.slice(
+                  spokenIndexRef.current
+                );
+                spokenIndexRef.current = speechSafe.length;
+                if (speechDelta) {
+                  void enqueueSpeech(speechDelta);
+                }
+              }
             } catch (parseError) {
               continue;
             }
@@ -342,16 +380,11 @@ export default function Home() {
         }
       }
 
-      const { answer } = thinkEnabled
-        ? splitThink(accumulated)
-        : {
-            answer: accumulated
-              .replace(/<think>[\s\S]*?<\/think>/gi, "")
-              .trim(),
-            think: "",
-          };
-      if (isConversationMode && answer) {
-        await speakText(answer);
+      if (isConversationMode) {
+        await enqueueSpeech("", true);
+        if (!speakingRef.current && !speechBufferRef.current.trim()) {
+          startRecognitionIfIdle();
+        }
       }
     } catch (error) {
       setMessages((prev) =>
@@ -379,18 +412,13 @@ export default function Home() {
       const next = !prev;
       if (next) {
         finalTranscriptRef.current = "";
-        if (!listeningRef.current && !startingRef.current) {
-          startingRef.current = true;
-          try {
-            recognition.start();
-          } catch (error) {
-            startingRef.current = false;
-          }
-        }
+        speechBufferRef.current = "";
+        startRecognitionIfIdle();
         setVoiceStatus("Listening…");
       } else {
         recognition.stop();
         window.speechSynthesis?.cancel();
+        speechBufferRef.current = "";
         setVoiceStatus("");
       }
       return next;
@@ -534,7 +562,10 @@ export default function Home() {
                       className="markdown"
                       remarkPlugins={[remarkGfm]}
                     >
-                      {message.text}
+                      {message.text ||
+                        (thinkEnabled && message.role === "assistant"
+                          ? "Thinking..."
+                          : "")}
                     </ReactMarkdown>
                   </div>
                 </div>

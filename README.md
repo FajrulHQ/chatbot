@@ -1,36 +1,66 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Local AI Chatbot (LM Studio + RAG + Voice)
+
+A portfolio-ready Next.js chatbot that runs entirely on your machine using LM Studio. It supports retrieval-augmented generation (RAG) from uploaded files, optional reasoning display, and real-time voice input/output for hands-free conversations.
+
+## Features
+
+- Local LLM streaming via LM Studio (no cloud dependency).
+- RAG: upload a document to ground answers in your content.
+- Voice input (speech-to-text) and voice output (text-to-speech).
+- Optional `<think>` display with collapsible reasoning panel.
+- Clean, modern UI optimized for demos.
+
+## Tech Stack
+
+- Next.js (App Router) + React + TypeScript
+- LM Studio local server
+- PDF parsing via `pdfjs-dist`
+- Text to Speech (TTS) + Speech to Text (STT)
+
+## Requirements
+
+- Node.js 18+ (recommended)
+- LM Studio installed
+
+## LM Studio Setup
+
+1. Install LM Studio: https://lmstudio.ai
+2. Download a chat model:
+   - Recommended: `qwen3-4b`
+3. Start the local server in LM Studio:
+   - Enable the OpenAI-compatible server
+   - Default base URL: `http://localhost:1234`
+
+Optional (for RAG embeddings):
+- Recommended embedding model: `nomic-ai/nomic-embed-text-v1.5-GGUF`
+
+These model names are used in the API routes and can be changed if you prefer other local models.
 
 ## Getting Started
 
-First, run the development server:
+Install dependencies and run the app:
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000` in your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Usage
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- Send messages directly or toggle conversation mode for voice.
+- Upload a `.txt`, `.md`, `.csv`, `.json`, or `.pdf` file to enable RAG.
+- Toggle “Think” to show or hide model reasoning.
 
-## Learn More
+## Project Structure
 
-To learn more about Next.js, take a look at the following resources:
+- `src/app/page.tsx`: UI, voice features, streaming rendering.
+- `src/app/api/chat/route.ts`: LM Studio chat streaming proxy.
+- `src/app/api/rag/route.ts`: RAG pipeline (chunking, embeddings, top-k, chat).
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Notes
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- Voice features rely on browser support for TTS and STT.
+- LM Studio must be running for responses to stream.
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
