@@ -32,8 +32,15 @@ export default function Home() {
   const [docError, setDocError] = useState("");
   const [docStatus, setDocStatus] = useState("");
   const [isListening, setIsListening] = useState(false);
+  const [isConversationMode, setIsConversationMode] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState("");
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const finalTranscriptRef = useRef("");
+  const conversationModeRef = useRef(false);
+  const speakingRef = useRef(false);
+  const listeningRef = useRef(false);
+  const startingRef = useRef(false);
   const chatBodyRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -63,6 +70,18 @@ export default function Home() {
   };
 
   useEffect(() => {
+    conversationModeRef.current = isConversationMode;
+  }, [isConversationMode]);
+
+  useEffect(() => {
+    speakingRef.current = isSpeaking;
+  }, [isSpeaking]);
+
+  useEffect(() => {
+    listeningRef.current = isListening;
+  }, [isListening]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     const SpeechRecognition =
       (window as typeof window & {
@@ -84,21 +103,43 @@ export default function Home() {
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
       let transcript = "";
+      let finalTranscript = "";
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        transcript += event.results[i][0].transcript;
+        const result = event.results[i];
+        const text = result[0].transcript;
+        transcript += text;
+        if (result.isFinal) {
+          finalTranscript += text;
+        }
+      }
+      if (finalTranscript.trim()) {
+        finalTranscriptRef.current += finalTranscript;
       }
       setInput(transcript.trimStart());
     };
 
     recognition.onstart = () => {
+      startingRef.current = false;
       setIsListening(true);
       setVoiceStatus("Listening…");
     };
     recognition.onend = () => {
+      startingRef.current = false;
       setIsListening(false);
-      setVoiceStatus("");
+      setVoiceStatus(conversationModeRef.current ? "Ready to respond…" : "");
+      if (!conversationModeRef.current || speakingRef.current) return;
+      const finalText = finalTranscriptRef.current.trim();
+      finalTranscriptRef.current = "";
+      if (finalText) {
+        void handleSend(finalText);
+      }
+    };
+    recognition.onnomatch = () => {
+      startingRef.current = false;
+      setIsListening(false);
     };
     recognition.onerror = () => {
+      startingRef.current = false;
       setIsListening(false);
       setVoiceStatus("Mic error. Check permissions.");
     };
@@ -151,8 +192,43 @@ export default function Home() {
     setDocStatus("");
   };
 
-  const handleSend = async () => {
-    const trimmed = input.trim();
+  const speakText = (text: string) => {
+    if (typeof window === "undefined") return Promise.resolve();
+    if (!("speechSynthesis" in window)) {
+      setVoiceStatus("Voice output unavailable in this browser.");
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = "en-US";
+      utterance.onstart = () => {
+        setIsSpeaking(true);
+        setVoiceStatus("Speaking…");
+      };
+      utterance.onend = () => {
+        setIsSpeaking(false);
+        setVoiceStatus(conversationModeRef.current ? "Listening…" : "");
+        if (
+          conversationModeRef.current &&
+          recognitionRef.current &&
+          !listeningRef.current
+        ) {
+          recognitionRef.current.start();
+        }
+        resolve();
+      };
+      utterance.onerror = () => {
+        setIsSpeaking(false);
+        setVoiceStatus("Speech output error.");
+        resolve();
+      };
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
+    });
+  };
+
+  const handleSend = async (overrideInput?: string) => {
+    const trimmed = (overrideInput ?? input).trim();
     if (!trimmed || isSending) return;
     const userMessage: ChatMessage = {
       id: `${Date.now()}-user`,
@@ -173,6 +249,10 @@ export default function Home() {
     setMessages(nextMessages);
     setInput("");
     setIsSending(true);
+    finalTranscriptRef.current = "";
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+    }
 
     try {
       const systemPrompt = thinkEnabled
@@ -261,6 +341,18 @@ export default function Home() {
           }
         }
       }
+
+      const { answer } = thinkEnabled
+        ? splitThink(accumulated)
+        : {
+            answer: accumulated
+              .replace(/<think>[\s\S]*?<\/think>/gi, "")
+              .trim(),
+            think: "",
+          };
+      if (isConversationMode && answer) {
+        await speakText(answer);
+      }
     } catch (error) {
       setMessages((prev) =>
         prev.map((message) =>
@@ -277,17 +369,32 @@ export default function Home() {
     }
   };
 
-  const toggleListening = () => {
+  const toggleConversation = () => {
     const recognition = recognitionRef.current;
     if (!recognition) {
       setVoiceStatus("Voice input unavailable in this browser.");
       return;
     }
-    if (isListening) {
-      recognition.stop();
-      return;
-    }
-    recognition.start();
+    setIsConversationMode((prev) => {
+      const next = !prev;
+      if (next) {
+        finalTranscriptRef.current = "";
+        if (!listeningRef.current && !startingRef.current) {
+          startingRef.current = true;
+          try {
+            recognition.start();
+          } catch (error) {
+            startingRef.current = false;
+          }
+        }
+        setVoiceStatus("Listening…");
+      } else {
+        recognition.stop();
+        window.speechSynthesis?.cancel();
+        setVoiceStatus("");
+      }
+      return next;
+    });
   };
 
   const toggleThink = (id: string) => {
@@ -488,16 +595,16 @@ export default function Home() {
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={toggleListening}
+                    onClick={toggleConversation}
                     className={`flex h-11 w-11 items-center justify-center rounded-full border text-lg transition ${
-                      isListening
+                      isConversationMode
                         ? "border-[#c77c4e] bg-[#f3c7a2] text-[#1b1c19] shadow-[0_10px_20px_-12px_rgba(0,0,0,0.6)]"
                         : "border-black/10 bg-white text-[#1b1c19] hover:-translate-y-0.5"
                     }`}
-                    aria-pressed={isListening}
-                    aria-label="Toggle voice input"
+                    aria-pressed={isConversationMode}
+                    aria-label="Toggle conversation mode"
                   >
-                    {isListening ? "●" : "🎙️"}
+                    {isConversationMode ? "●" : "🎙️"}
                   </button>
                   <button
                     type="submit"
