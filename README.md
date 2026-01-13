@@ -15,7 +15,7 @@ A portfolio-ready Next.js chatbot that runs entirely on your machine using LM St
 - Next.js (App Router) + React + TypeScript
 - LM Studio local server
 - PDF parsing via `pdfjs-dist`
-- Text to Speech (TTS) + Speech to Text (STT)
+- Speech Recognition + Speech Synthesis (browser APIs)
 
 ## Requirements
 
@@ -61,6 +61,5 @@ Open `http://localhost:3000` in your browser.
 
 ## Notes
 
-- Voice features rely on browser support for TTS and STT.
+- Voice features rely on browser support for Speech Recognition and Speech Synthesis.
 - LM Studio must be running for responses to stream.
-
