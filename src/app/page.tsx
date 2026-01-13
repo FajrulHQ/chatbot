@@ -17,6 +17,7 @@ export default function Home() {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [thinkEnabled, setThinkEnabled] = useState(false);
   const [expandedThink, setExpandedThink] = useState<Record<string, boolean>>(
     {}
   );
@@ -112,23 +113,32 @@ export default function Home() {
     setIsSending(true);
 
     try {
+      const systemPrompt = thinkEnabled
+        ? "Include a <think>...</think> section with concise reasoning, followed by the final answer."
+        : "Respond with only the final answer. Do not include <think> tags or hidden reasoning. /no_think";
+
+      const payloadMessages = [
+        { role: "system", content: systemPrompt },
+        ...nextMessages
+          .filter((message) => message.role !== "assistant" || message.text)
+          .map((message) => ({
+            role: message.role,
+            content: message.text,
+          })),
+      ];
+
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          messages: nextMessages
-            .filter((message) => message.role !== "assistant" || message.text)
-            .map((message) => ({
-            role: message.role,
-            content: message.text,
-          })),
+          messages: payloadMessages,
         }),
       });
 
       if (!response.ok) {
-        throw new Error("Ollama request failed");
+        throw new Error("LM Studio request failed");
       }
 
       if (!response.body) {
@@ -163,7 +173,14 @@ export default function Home() {
               const delta = payload.choices?.[0]?.delta?.content ?? "";
               if (!delta) continue;
               accumulated += delta;
-              const { answer, think } = splitThink(accumulated);
+              const { answer, think } = thinkEnabled
+                ? splitThink(accumulated)
+                : {
+                    answer: accumulated
+                      .replace(/<think>[\s\S]*?<\/think>/gi, "")
+                      .trim(),
+                    think: "",
+                  };
               setMessages((prev) =>
                 prev.map((message) =>
                   message.id === assistantId
@@ -275,6 +292,17 @@ export default function Home() {
               <span className="rounded-full border border-black/10 bg-white px-3 py-2 text-[#4f5148]">
                 Temp 0.7
               </span>
+              <button
+                type="button"
+                onClick={() => setThinkEnabled((prev) => !prev)}
+                className={`rounded-full border px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] transition ${
+                  thinkEnabled
+                    ? "border-[#c77c4e] bg-[#f3c7a2] text-[#1b1c19]"
+                    : "border-black/10 bg-white text-[#4f5148]"
+                }`}
+              >
+                Think {thinkEnabled ? "On" : "Off"}
+              </button>
             </div>
           </header>
 
@@ -294,7 +322,7 @@ export default function Home() {
                   {message.role === "user" ? "You" : "AI"}
                 </div>
                 <div className="max-w-xl space-y-3">
-                  {message.role === "assistant" && message.think ? (
+                  {thinkEnabled && message.role === "assistant" && message.think ? (
                     <div className="px-3 py-2 text-[11px] text-[#6a6d62]">
                       <div className="flex items-center justify-between gap-3">
                         <span className="font-semibold uppercase tracking-[0.2em]">
@@ -348,16 +376,6 @@ export default function Home() {
                 handleSend();
               }}
             >
-              <div className="flex flex-wrap gap-2 text-xs font-medium text-[#6a6d62]">
-                {["Summarize", "Rewrite", "Translate", "Outline"].map((chip) => (
-                  <span
-                    key={chip}
-                    className="rounded-full border border-black/10 bg-[#f7f2e9] px-3 py-1"
-                  >
-                    {chip}
-                  </span>
-                ))}
-              </div>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <input
                   className="flex-1 rounded-full border border-black/10 bg-[#fdfbf7] px-4 py-3 text-sm text-[#1b1c19] placeholder:text-[#9b9e93] focus:outline-none focus:ring-2 focus:ring-[#c4d4c5]"
