@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 type ChatMessage = {
   id: string;
@@ -17,6 +19,8 @@ export default function Home() {
   const [isListening, setIsListening] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState("");
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const chatBodyRef = useRef<HTMLDivElement | null>(null);
+  const bottomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -64,6 +68,11 @@ export default function Home() {
       recognition.stop();
     };
   }, []);
+
+  useEffect(() => {
+    if (!bottomRef.current) return;
+    bottomRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, isSending]);
 
   const handleSend = async () => {
     const trimmed = input.trim();
@@ -189,7 +198,10 @@ export default function Home() {
             </div>
           </header>
 
-          <section className="flex flex-1 flex-col gap-6 px-6 py-8">
+          <section
+            ref={chatBodyRef}
+            className="flex flex-col h-[65vh] gap-6 overflow-y-auto px-6 py-8"
+          >
             {messages.map((message) => (
               <div key={message.id} className="flex items-start gap-4">
                 <div
@@ -208,13 +220,23 @@ export default function Home() {
                       : "bg-white shadow-[0_16px_40px_-32px_rgba(0,0,0,0.6)]"
                   }`}
                 >
-                  {message.text}
+                  <ReactMarkdown className="markdown" remarkPlugins={[remarkGfm]}>
+                    {message.text}
+                  </ReactMarkdown>
                 </div>
               </div>
             ))}
-            <div className="rounded-[22px] border border-dashed border-black/10 bg-[#fdfbf7] px-5 py-4 text-sm text-[#6a6d62]">
-              Tip: Ask for shorter, punchier, or more formal variants anytime.
-            </div>
+            {isSending ? (
+              <div className="flex items-start gap-4">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#d7e3d1] text-xs font-semibold text-[#1b1c19]">
+                  AI
+                </div>
+                <div className="max-w-xl rounded-[24px] border border-black/5 bg-white px-5 py-4 text-sm leading-6 text-[#6a6d62] shadow-[0_16px_40px_-32px_rgba(0,0,0,0.6)]">
+                  Thinking…
+                </div>
+              </div>
+            ) : null}
+            <div ref={bottomRef} />
           </section>
 
           <footer className="border-t border-black/5 px-6 py-5">

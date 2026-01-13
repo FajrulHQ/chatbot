@@ -44,3 +44,104 @@ body {
   animation: fadeUp 0.8s ease both;
   animation-delay: 0.15s;
 }
+
+.markdown {
+  line-height: 1.6;
+}
+
+.markdown p {
+  margin: 0 0 0.75rem;
+}
+
+.markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown a {
+  color: #6d5b3f;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.markdown ul,
+.markdown ol {
+  margin: 0 0 0.75rem 1.25rem;
+  padding: 0;
+}
+
+.markdown li {
+  margin-bottom: 0.35rem;
+}
+
+.markdown blockquote {
+  margin: 0 0 0.75rem;
+  padding-left: 0.9rem;
+  border-left: 2px solid rgba(27, 28, 25, 0.2);
+  color: #5a5d53;
+}
+
+.markdown hr {
+  margin: 1rem 0;
+  border: 0;
+  border-top: 1px solid rgba(27, 28, 25, 0.12);
+}
+
+.markdown strong {
+  font-weight: 600;
+}
+
+.markdown em {
+  font-style: italic;
+}
+
+.markdown table {
+  margin: 0 0 0.75rem;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92em;
+}
+
+.markdown th,
+.markdown td {
+  border: 1px solid rgba(27, 28, 25, 0.12);
+  padding: 0.5rem 0.6rem;
+  text-align: left;
+}
+
+.markdown th {
+  background: #f1ede6;
+  font-weight: 600;
+}
+
+.markdown tr:nth-child(even) td {
+  background: rgba(247, 242, 233, 0.6);
+}
+
+.markdown img {
+  max-width: 100%;
+  border-radius: 12px;
+}
+
+.markdown code {
+  border-radius: 8px;
+  background: #f1ede6;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.9em;
+}
+
+.markdown pre {
+  margin: 0 0 0.75rem;
+  overflow-x: auto;
+  border-radius: 16px;
+  background: #1b1c19;
+  padding: 1rem 1.1rem;
+  color: #f7f2e9;
+  font-size: 0.9em;
+}
+
+.markdown pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
