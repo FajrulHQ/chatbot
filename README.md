@@ -1,6 +1,6 @@
 # Local AI Chatbot (LM Studio + RAG + Voice)
 
-A portfolio-ready Next.js chatbot that runs entirely on your machine using LM Studio. It supports retrieval-augmented generation (RAG) from uploaded files, optional reasoning display, and real-time voice input/output for hands-free conversations.
+A Next.js chatbot that runs entirely on your machine using LM Studio. It supports retrieval-augmented generation (RAG) from uploaded files, optional reasoning display, and real-time voice input/output for hands-free conversations.
 
 ## Features
 
