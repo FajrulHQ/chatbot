@@ -55,11 +55,7 @@ Open `http://localhost:3000` in your browser.
 
 ## Demo
 
-<video controls loop width="640">
-  <source src="./demo.mp4" type="video/mp4">
-  Your browser does not support the video tag.
-</video>
-
+- Recording: [click here](demo.mp4)
 
 ## Project Structure
 
