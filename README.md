@@ -55,6 +55,7 @@ Open `http://localhost:3000` in your browser.
 
 ## Demo
 
+![demo](demo.png)
 - Recording: [click here](demo.mp4)
 
 ## Project Structure
