@@ -53,6 +53,14 @@ Open `http://localhost:3000` in your browser.
 - Upload a `.txt`, `.md`, `.csv`, `.json`, or `.pdf` file to enable RAG.
 - Toggle “Think” to show or hide model reasoning.
 
+## Demo
+
+<video controls loop width="640">
+  <source src="./demo.mp4" type="video/mp4">
+  Your browser does not support the video tag.
+</video>
+
+
 ## Project Structure
 
 - `src/app/page.tsx`: UI, voice features, streaming rendering.
