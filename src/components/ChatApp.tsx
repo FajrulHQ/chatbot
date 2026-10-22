@@ -70,6 +70,8 @@ export type AttachmentItem = {
   isImage: boolean;
   isAudio?: boolean;
   dataUrl?: string;
+  textContent?: string;
+  charCount?: number;
 };
 
 export type StepProcessInfo = {
@@ -81,6 +83,10 @@ export type StepProcessInfo = {
     threshold: number;
     latencyMs: number;
     rationale?: string;
+  };
+  documentContext?: {
+    fileName: string;
+    charCount: number;
   };
   toolExecution?: {
     tool: string;
@@ -826,7 +832,7 @@ export default function ChatApp() {
     }
   };
 
-  // Files & Attachments with DataURL Preview
+  // Files & Attachments with DataURL Preview and Document Text Extraction
   const triggerFileInput = () => fileInputRef.current?.click();
 
   const handleIncomingFiles = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -836,13 +842,45 @@ export default function ChatApp() {
       const f = files[i];
       const isImg = f.type.startsWith("image/");
       let dataUrl: string | undefined;
+      let textContent: string | undefined;
+      let charCount: number | undefined;
+
       if (isImg) {
         dataUrl = await new Promise<string>((res) => {
           const r = new FileReader();
           r.onload = () => res(r.result as string);
           r.readAsDataURL(f);
         });
+      } else {
+        // Document: extract text via /api/document/extract for Q&A
+        try {
+          showToast(`Extracting document text from ${f.name}...`);
+          const fd = new FormData();
+          fd.append("file", f);
+          const extRes = await fetch("/api/document/extract", {
+            method: "POST",
+            body: fd,
+          });
+          if (extRes.ok) {
+            const extData = await extRes.json();
+            textContent = extData.text;
+            charCount = extData.charCount;
+            showToast(`Loaded ${f.name} (${charCount ? charCount.toLocaleString() : 0} chars) for Document Q&A`);
+          } else {
+            throw new Error(`HTTP ${extRes.status}`);
+          }
+        } catch (err) {
+          console.warn("API document extraction fallback to FileReader:", err);
+          textContent = await new Promise<string>((res) => {
+            const r = new FileReader();
+            r.onload = () => res((r.result as string) || "");
+            r.onerror = () => res("");
+            r.readAsText(f);
+          });
+          charCount = textContent.length;
+        }
       }
+
       setAttachments((prev) => [
         ...prev,
         {
@@ -852,11 +890,13 @@ export default function ChatApp() {
           isImage: isImg,
           isAudio: f.type.startsWith("audio/"),
           dataUrl,
+          textContent,
+          charCount,
         },
       ]);
     }
     if (fileInputRef.current) fileInputRef.current.value = "";
-    showToast(`Attached ${files.length} file(s) with visual preview`);
+    showToast(`Attached ${files.length} file(s)`);
   };
 
   const removeAttachment = (id: string) => {
@@ -903,6 +943,15 @@ export default function ChatApp() {
       .filter((a) => a.isImage && a.dataUrl)
       .map((a) => a.dataUrl as string);
 
+    const docTextPayload = currentAttachments
+      .filter((a) => a.textContent)
+      .map((a) => `=== Document: ${a.name} ===\n${a.textContent}`)
+      .join("\n\n");
+    const docNamePayload = currentAttachments
+      .filter((a) => a.textContent)
+      .map((a) => a.name)
+      .join(", ");
+
     const nowStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
     // Snapshot CURRENT model and runtime for this message so it never changes retroactively!
@@ -915,7 +964,7 @@ export default function ChatApp() {
       time: nowStr,
       modelName: capturedModelName,
       runtimeKey: capturedRuntimeKey,
-      text: text || "[Attached multimodal image for inspection]",
+      text: text || (docNamePayload ? `[Analyze attached document: ${docNamePayload}]` : "[Attached file for inspection]"),
       attachments: currentAttachments,
     };
 
@@ -1012,6 +1061,8 @@ export default function ChatApp() {
           maxTokens,
           systemPrompt,
           images: imagePayloads,
+          documentText: docTextPayload || undefined,
+          documentName: docNamePayload || undefined,
         }),
         signal: controller.signal,
       });
@@ -1465,7 +1516,7 @@ export default function ChatApp() {
                 <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--muted)" }}>
                   <div style={{ fontSize: "36px", marginBottom: "12px" }}>◈</div>
                   <div style={{ fontSize: "18px", fontWeight: 600, color: "var(--fg)" }}>
-                    MONO // Agentic Multimodal Local LLM
+                    MONO | Agentic Multimodal Local LLM
                   </div>
                   <div style={{ fontSize: "12px", marginTop: "6px", color: "var(--fg-2)" }}>
                     Runtime: <strong>{activeRuntime.name}</strong> · Model: <strong>{activeModel.name}</strong>
@@ -1549,7 +1600,36 @@ export default function ChatApp() {
                         {/* ─── AGENT EXECUTION TRACE (HERMES / CURSOR ACCORDION - IMAGE #2) ─── */}
                         {(msg.stepProcess || msg.think) && (
                           <div className="agent-execution-trace">
-                            {/* 1. Decision Model Step */}
+                            {/* 1. Document Context Step (if attached) */}
+                            {msg.stepProcess?.documentContext && (
+                              <div className="trace-step-item">
+                                <button
+                                  type="button"
+                                  className="trace-step-btn"
+                                  onClick={() => toggleStepExpand(msg.id, "doc")}
+                                >
+                                  <span className="trace-chevron">{expandedSteps[`${msg.id}-doc`] ? "▾" : "›"}</span>
+                                  <span className="trace-icon">📄</span>
+                                  <span className="trace-label">
+                                    Document: {msg.stepProcess.documentContext.fileName}
+                                  </span>
+                                  <span className="trace-sub">
+                                    ({msg.stepProcess.documentContext.charCount.toLocaleString()} chars · Q&A Context)
+                                  </span>
+                                </button>
+                                {expandedSteps[`${msg.id}-doc`] && (
+                                  <div className="trace-step-content">
+                                    <div><strong>Active Document:</strong> {msg.stepProcess.documentContext.fileName}</div>
+                                    <div><strong>Context Size:</strong> {msg.stepProcess.documentContext.charCount.toLocaleString()} characters</div>
+                                    <div style={{ marginTop: "4px", color: "var(--muted)", fontSize: "10px" }}>
+                                      Grounding Q&A answers strictly and faithfully on this document&apos;s text.
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* 2. Decision Model Step */}
                             {msg.stepProcess?.decision && (
                               <div className="trace-step-item">
                                 <button
@@ -1564,6 +1644,8 @@ export default function ChatApp() {
                                       ? "Decision: Web Search Required"
                                       : msg.stepProcess.decision.tool === "calculator"
                                       ? "Decision: Calculation Required"
+                                      : msg.stepProcess.decision.tool === "document_qna"
+                                      ? "Decision: Document Q&A Analysis"
                                       : "Decision: Base Knowledge"}
                                   </span>
                                   <span className="trace-sub">
@@ -1573,7 +1655,7 @@ export default function ChatApp() {
                                 {expandedSteps[`${msg.id}-decision`] && (
                                   <div className="trace-step-content">
                                     <div><strong>Intent:</strong> {msg.stepProcess.decision.intent}</div>
-                                    <div><strong>Routing Policy:</strong> {msg.stepProcess.decision.tool === "web_search" ? "Web Search Tool Triggered" : msg.stepProcess.decision.tool === "calculator" ? "Math Calculation Triggered" : "Direct Parametric Knowledge"}</div>
+                                    <div><strong>Routing Policy:</strong> {msg.stepProcess.decision.tool === "web_search" ? "Web Search Tool Triggered" : msg.stepProcess.decision.tool === "calculator" ? "Math Calculation Triggered" : msg.stepProcess.decision.tool === "document_qna" ? "Document Q&A Analysis Engine" : "Direct Parametric Knowledge"}</div>
                                     <div><strong>Confidence:</strong> {Math.round(msg.stepProcess.decision.confidence * 100)}% (Threshold: 70%)</div>
                                     {msg.stepProcess.decision.rationale && <div><strong>Rationale:</strong> {msg.stepProcess.decision.rationale}</div>}
                                   </div>
@@ -1715,8 +1797,8 @@ export default function ChatApp() {
                         <polyline points="14 2 14 8 20 8"></polyline>
                       </svg>
                     )}
-                    <span style={{ fontSize: "11px", maxWidth: "160px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {att.name} ({att.size})
+                    <span style={{ fontSize: "11px", maxWidth: "220px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {att.name} {att.charCount ? `(${att.charCount.toLocaleString()} chars · Q&A Ready)` : `(${att.size})`}
                     </span>
                     <span
                       className="remove-chip-btn"
@@ -1748,11 +1830,11 @@ export default function ChatApp() {
               <div className="composer-bottom-bar">
                 {/* Left Action Controls */}
                 <div className="composer-actions-left">
-                  <button className="action-btn" onClick={triggerFileInput} title="Attach image or document">
+                  <button className="action-btn" onClick={triggerFileInput} title="Attach image or document for Q&A">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
                     </svg>
-                    <span>Attach Image</span>
+                    <span>Attach File / Doc</span>
                   </button>
 
                   <button
@@ -2047,7 +2129,7 @@ export default function ChatApp() {
         ref={fileInputRef}
         type="file"
         multiple
-        accept="image/*,.pdf,.txt,.md,.json,.csv"
+        accept="image/*,.pdf,.txt,.md,.markdown,.json,.csv,.ts,.js,.py,.html,.xml,.doc,.docx"
         style={{ display: "none" }}
         onChange={handleIncomingFiles}
       />

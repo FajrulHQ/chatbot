@@ -19,6 +19,7 @@ type ChatRequestPayload = {
   systemPrompt?: string;
   images?: string[];
   documentText?: string;
+  documentName?: string;
 };
 
 export type DecisionResult = {
@@ -27,7 +28,7 @@ export type DecisionResult = {
   need_web_search: boolean;
   confidence: number;
   threshold: number;
-  tool: "web_search" | "calculator" | "direct_knowledge";
+  tool: "web_search" | "calculator" | "document_qna" | "direct_knowledge";
   query: string;
   rationale: string;
   latencyMs: number;
@@ -213,14 +214,18 @@ function executeCalculator(text: string): CalculationResult | null {
 }
 
 // ─── 3. DECISION MODEL TASK (d1-omni-600m) ─────────────────────────
-async function runDecisionGate(userPrompt: string): Promise<DecisionResult> {
+async function runDecisionGate(
+  userPrompt: string,
+  hasDocument: boolean = false,
+  docName: string = ""
+): Promise<DecisionResult> {
   const decisionStart = performance.now();
   let gateModel = "d1-omni-600m";
   let intent = "Analytical Inquiry";
   let need_web_search = false;
   let confidence = 0.5;
   const threshold = 0.7;
-  let tool: "web_search" | "calculator" | "direct_knowledge" = "direct_knowledge";
+  let tool: "web_search" | "calculator" | "document_qna" | "direct_knowledge" = "direct_knowledge";
   let query = userPrompt;
   let rationale = "Evaluated user prompt constraints.";
 
@@ -238,6 +243,45 @@ async function runDecisionGate(userPrompt: string): Promise<DecisionResult> {
       rationale: `Exact arithmetic computation: ${calcRes.display}`,
       latencyMs: Math.max(5, Math.round(performance.now() - decisionStart)),
     };
+  }
+
+  // Document Q&A routing: If a document is attached and user is asking about it
+  if (hasDocument) {
+    const lower = userPrompt.toLowerCase();
+    const isDocQuery =
+      lower.includes("dokumen") ||
+      lower.includes("document") ||
+      lower.includes("file") ||
+      lower.includes("isi") ||
+      lower.includes("summary") ||
+      lower.includes("ringkas") ||
+      lower.includes("jelaskan") ||
+      lower.includes("explain") ||
+      lower.includes("apa") ||
+      lower.includes("what") ||
+      lower.includes("who") ||
+      lower.includes("siapa") ||
+      lower.includes("sebutkan") ||
+      lower.includes("analisis") ||
+      lower.includes("detail") ||
+      lower.includes("baca") ||
+      lower.includes("read") ||
+      lower.includes("according to") ||
+      lower.length < 250; // default query to document analysis when document is attached
+
+    if (isDocQuery) {
+      return {
+        gateModel: "d1-omni-600m",
+        intent: "Document Analysis & Contextual Q&A",
+        need_web_search: false,
+        confidence: 0.99,
+        threshold,
+        tool: "document_qna",
+        query: userPrompt,
+        rationale: `Attached document (${docName || "Context"}) provided. Routing to Document Analysis Engine without external web search.`,
+        latencyMs: Math.max(5, Math.round(performance.now() - decisionStart)),
+      };
+    }
   }
 
   // Probe d1-omni-600m in LM Studio for real-time / web inquiry
@@ -392,6 +436,7 @@ export async function POST(request: Request) {
     systemPrompt,
     images = [],
     documentText,
+    documentName = "Document",
   } = body;
 
   // 1. Pre-flight health check
@@ -407,7 +452,11 @@ export async function POST(request: Request) {
   const lastUserMsg = messages.filter((m) => m.role === "user").pop()?.content || "";
 
   // 3. AGENTIC DECISION STEP (Using Decision Model d1-omni-600m)
-  const decision = await runDecisionGate(lastUserMsg);
+  const decision = await runDecisionGate(
+    lastUserMsg,
+    Boolean(documentText && documentText.trim()),
+    documentName
+  );
 
   // 4. AGENTIC TOOL EXECUTION STEP (If confidence >= 0.7 and tool required)
   let toolSources: SearchSource[] = [];
@@ -460,10 +509,10 @@ export async function POST(request: Request) {
   preparedMessages.push({ role: "system", content: baseSystem });
 
   // If document was provided
-  if (documentText) {
+  if (documentText && documentText.trim()) {
     preparedMessages.push({
       role: "system",
-      content: `Context from attached document:\n\"\"\"\n${documentText.slice(0, 15000)}\n\"\"\"`,
+      content: `[ATTACHED DOCUMENT CONTEXT: "${documentName}"]\n"""\n${documentText.slice(0, 24000)}\n"""\n\nINSTRUCTIONS FOR DOCUMENT Q&A:\n1. Base your answer strictly, thoroughly, and faithfully on the document context provided above.\n2. Accurately quote or reference specific sections, terms, and figures from the document.\n3. If the user asks for a summary, provide a comprehensive executive summary with key takeaways.\n4. If the question cannot be answered from the document, state clearly that the document does not contain that specific information.`,
     });
   }
 
@@ -529,8 +578,15 @@ export async function POST(request: Request) {
         latencyMs: decision.latencyMs,
         rationale: decision.rationale,
       },
+      documentContext:
+        documentText && documentText.trim()
+          ? {
+              fileName: documentName,
+              charCount: documentText.length,
+            }
+          : undefined,
       toolExecution:
-        decision.tool !== "direct_knowledge"
+        decision.tool !== "direct_knowledge" && decision.tool !== "document_qna"
           ? {
               tool: decision.tool,
               query: decision.query,
@@ -667,6 +723,9 @@ export async function POST(request: Request) {
         reasoningLevel.toLowerCase() === "off" ? "none" : reasoningLevel.toLowerCase();
 
       let augmentedPrompt = lastUserMsg;
+      if (documentText && documentText.trim()) {
+        augmentedPrompt = `[Document: ${documentName}]\n\"\"\"\n${documentText.slice(0, 24000)}\n\"\"\"\n\n[User Question]: ${lastUserMsg}`;
+      }
       if (toolSources.length > 0) {
         augmentedPrompt += `\n\n[Web Search Context]\n` + toolSources.map((s) => `- ${s.title}: ${s.snippet}`).join("\n");
       }
